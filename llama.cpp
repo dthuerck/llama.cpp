@@ -2161,6 +2161,7 @@ struct llama_model {
     struct ggml_tensor * output_b;
 
     std::vector<llama_layer> layers;
+    std::vector<void *> swap_pointers;
 
     llama_split_mode split_mode;
     int main_gpu;
@@ -5911,47 +5912,6 @@ static bool llm_load_tensors(
     // loading time will be recalculate after the first eval, so
     // we take page faults deferred by mmap() into consideration
     model.t_load_us = ggml_time_us() - model.t_start_us;
-
-    ////
-    // CAUTION: experiments start here
-    ////
-    for (ggml_backend_buffer_t buf : model.bufs) {
-        if(!ggml_backend_buffer_is_host(buf))
-        {
-            // print free device memory
-            size_t free = 0;
-            size_t total = 0;
-            ggml_backend_cuda_get_device_memory(0, &free, &total);
-            std::cout << "CUDA Memory Free: " << free / (1024 * 1024) << " out of " << total / (1024 * 1024) << std::endl;
-
-            // serialize buffers
-            std::cout << "SERIALIZE!!!" << std::endl;
-            void * old_dev_ptr = ggml_backend_buffer_serialize(buf);
-
-            // print free device memory again
-            ggml_backend_cuda_get_device_memory(0, &free, &total);
-            std::cout << "CUDA Memory Free: " << free / (1024 * 1024) << " out of " << total / (1024 * 1024) << std::endl;
-
-            // deserialize buffers
-            std::cout << "DESERIALIZE!!!" << std::endl;
-            void * dev_ptr = ggml_backend_buffer_deserialize(buf);
-
-            // re-base tensor pointers
-            for (struct ggml_tensor * cur = ggml_get_first_tensor(cu_ctx); cur != NULL; cur = ggml_get_next_tensor(cu_ctx, cur)) {
-                const long offset = (char *) cur->data - (char *) old_dev_ptr;
-                cur->data = dev_ptr + offset;
-            }
-
-            // print free device memory again
-            ggml_backend_cuda_get_device_memory(0, &free, &total);
-            std::cout << "CUDA Memory Free: " << free / (1024 * 1024) << " out of " << total / (1024 * 1024) << std::endl;       
-        }
-    }
-
-    ////
-    // END CAUTION
-    ////
-
     return true;
 }
 
@@ -15046,6 +15006,49 @@ struct llama_model * llama_load_model_from_file(
 
 void llama_free_model(struct llama_model * model) {
     delete model;
+}
+
+void llama_model_backend_swap_out(struct llama_model * model)
+{
+    assert(model->ctxs.size() == model->bufs.size());
+
+    model->swap_pointers.clear();
+    model->swap_pointers.reserve(model->ctxs.size());
+
+    for(int buf_ix = 0; buf_ix < model->bufs.size(); ++buf_ix)
+    {
+        ggml_backend_buffer_t buf = model->bufs[buf_ix];
+
+        // only need to download device-side buffers
+        if(ggml_backend_buffer_is_host(buf))
+            continue;
+
+        model->swap_pointers[buf_ix] = ggml_backend_buffer_serialize(buf);
+    }
+}
+
+void llama_model_backend_swap_in(struct llama_model * model)
+{
+    assert(model->ctxs.size() == model->bufs.size());
+
+    for(int buf_ix = 0; buf_ix < model->bufs.size(); ++buf_ix)
+    {
+        ggml_backend_buffer_t buf = model->bufs[buf_ix];
+        ggml_context * ctx = model->ctxs[buf_ix];
+        void * swap_ptr = model->swap_pointers[buf_ix];
+
+        // only need to download device-side buffers
+        if(ggml_backend_buffer_is_host(buf))
+            continue;
+
+        void * new_backend_ptr = ggml_backend_buffer_deserialize(buf);
+
+        // re-base tensors to new backend pointer
+        for (struct ggml_tensor * cur = ggml_get_first_tensor(ctx); cur != NULL; cur = ggml_get_next_tensor(ctx, cur)) {
+            const long offset = (char *) cur->data - (char *) swap_ptr;
+            cur->data = (void *) ((char *) new_backend_ptr + offset);
+        }
+    }
 }
 
 struct llama_context * llama_new_context_with_model(
