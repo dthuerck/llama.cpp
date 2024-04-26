@@ -369,13 +369,39 @@ struct ggml_backend_cuda_buffer_context {
     void * dev_ptr = nullptr;
     std::string name;
 
-    ggml_backend_cuda_buffer_context(int device, void * dev_ptr) :
-        device(device), dev_ptr(dev_ptr),
+    // host buffer allowing to load/unload GPU memory for model switches
+    size_t dev_size = 0;
+    void * host_ptr = nullptr;
+
+    ggml_backend_cuda_buffer_context(int device, void * dev_ptr, size_t dev_size) :
+        device(device), dev_ptr(dev_ptr), dev_size(dev_size),
         name(GGML_CUDA_NAME + std::to_string(device)) {
     }
 
     ~ggml_backend_cuda_buffer_context() {
+        ggml_cuda_set_device(device);
+        if(dev_ptr != nullptr)
+            CUDA_CHECK(cudaFree(dev_ptr));
+    }
+
+    // store device data in host buffer and free device-side memory
+    void * serialize() {
+        host_ptr = malloc(dev_size);
+        CUDA_CHECK(cudaMemcpy(host_ptr, dev_ptr, dev_size, cudaMemcpyDeviceToHost));
+
+        void * old_dev_ptr = dev_ptr;
         CUDA_CHECK(cudaFree(dev_ptr));
+        return old_dev_ptr;
+    }
+
+    void * deserialize(void * new_dev_ptr) {
+        dev_ptr = new_dev_ptr;
+        CUDA_CHECK(cudaMemcpy(dev_ptr, host_ptr, dev_size, cudaMemcpyHostToDevice));
+
+        free(host_ptr);
+        host_ptr = nullptr;
+
+        return new_dev_ptr;
     }
 };
 
@@ -464,6 +490,31 @@ GGML_CALL static void ggml_backend_cuda_buffer_clear(ggml_backend_buffer_t buffe
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
+GGML_CALL static void * ggml_backend_cuda_buffer_serialize(ggml_backend_buffer_t buffer)
+{
+    ggml_backend_cuda_buffer_context * buft_ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+
+    return buft_ctx->serialize();
+}
+
+GGML_CALL static void*  ggml_backend_cuda_buffer_deserialize(ggml_backend_buffer_t buffer)
+{
+    ggml_backend_cuda_buffer_context * buft_ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+
+    // re-allocate device memory
+    ggml_cuda_set_device(buft_ctx->device);
+
+    void * dev_ptr;
+    cudaError_t err = cudaMalloc(&dev_ptr, buft_ctx->dev_size);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "%s: re-allocating %.2f MiB on device %d: cudaMalloc failed: %s\n", __func__, buft_ctx->dev_size/1024.0/1024.0, buft_ctx->device, cudaGetErrorString(err));
+        return nullptr;
+    }
+
+    buft_ctx->deserialize(dev_ptr);
+    return dev_ptr;
+}
+
 static ggml_backend_buffer_i ggml_backend_cuda_buffer_interface = {
     /* .get_name        = */ ggml_backend_cuda_buffer_get_name,
     /* .free_buffer     = */ ggml_backend_cuda_buffer_free_buffer,
@@ -474,6 +525,8 @@ static ggml_backend_buffer_i ggml_backend_cuda_buffer_interface = {
     /* .cpy_tensor      = */ ggml_backend_cuda_buffer_cpy_tensor,
     /* .clear           = */ ggml_backend_cuda_buffer_clear,
     /* .reset           = */ NULL,
+    /* .serialize       = */ ggml_backend_cuda_buffer_serialize,
+    /* .deserialize     = */ ggml_backend_cuda_buffer_deserialize
 };
 
 // cuda buffer type
@@ -495,6 +548,9 @@ GGML_CALL static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffe
 
     size = std::max(size, (size_t)1); // cudaMalloc returns null for size 0
 
+    std::cout << "In ggml_backend_cuda_buffer_type_alloc_buffer..." << std::endl;
+    std::cout << "cudaMalloc " << (size / (1024 * 1024)) << std::endl;
+
     void * dev_ptr;
     cudaError_t err = cudaMalloc(&dev_ptr, size);
     if (err != cudaSuccess) {
@@ -502,7 +558,7 @@ GGML_CALL static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffe
         return nullptr;
     }
 
-    ggml_backend_cuda_buffer_context * ctx = new ggml_backend_cuda_buffer_context(buft_ctx->device, dev_ptr);
+    ggml_backend_cuda_buffer_context * ctx = new ggml_backend_cuda_buffer_context(buft_ctx->device, dev_ptr, size);
 
     return ggml_backend_buffer_init(buft, ggml_backend_cuda_buffer_interface, ctx, size);
 }
@@ -862,6 +918,8 @@ static struct ggml_backend_buffer_i ggml_backend_cuda_split_buffer_interface = {
     /* .cpy_tensor      = */ NULL,
     /* .clear           = */ ggml_backend_cuda_split_buffer_clear,
     /* .reset           = */ NULL,
+    /* .serialize       = */ NULL,
+    /* .deserialize     = */ NULL
 };
 
 // cuda split buffer type

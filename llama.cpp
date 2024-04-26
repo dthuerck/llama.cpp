@@ -3502,6 +3502,7 @@ struct llama_model_loader {
                     mmap_used.first  = std::min(mmap_used.first,  weight->offs);
                     mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
                 } else {
+                    // std::cout << "(MMAP) TENSOR CUDA SET: " << ggml_get_name(cur) << std::endl;
                     ggml_backend_tensor_set(cur, (uint8_t *) mapping->addr + weight->offs, 0, n_size);
                 }
             } else {
@@ -3514,6 +3515,7 @@ struct llama_model_loader {
                     read_buf.resize(ggml_nbytes(cur));
                     file->seek(weight->offs, SEEK_SET);
                     file->read_raw(read_buf.data(), ggml_nbytes(cur));
+                    // std::cout << "(NO MMAP) TENSOR CUDA SET: " << ggml_get_name(cur) << std::endl;
                     ggml_backend_tensor_set(cur, read_buf.data(), 0, n_size);
                 }
             }
@@ -5777,12 +5779,18 @@ static bool llm_load_tensors(
     size_t n_max_backend_buffer = ctx_map.size() * ml.files.size();
     model.bufs.reserve(n_max_backend_buffer);
 
+    ggml_context * cu_ctx = nullptr;
     for (auto & it : ctx_map) {
         ggml_backend_buffer_type_t buft = it.first;
         ggml_context * ctx              = it.second;
 
         llama_buf_map bufs;
         bufs.reserve(n_max_backend_buffer);
+
+        if(buft != llama_default_buffer_type_cpu(true))
+        {
+            cu_ctx = ctx;
+        }
 
         // only the mmap region containing the tensors in the model is mapped to the backend buffer
         // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer, then we could just use metal for all layers
@@ -5903,6 +5911,47 @@ static bool llm_load_tensors(
     // loading time will be recalculate after the first eval, so
     // we take page faults deferred by mmap() into consideration
     model.t_load_us = ggml_time_us() - model.t_start_us;
+
+    ////
+    // CAUTION: experiments start here
+    ////
+    for (ggml_backend_buffer_t buf : model.bufs) {
+        if(!ggml_backend_buffer_is_host(buf))
+        {
+            // print free device memory
+            size_t free = 0;
+            size_t total = 0;
+            ggml_backend_cuda_get_device_memory(0, &free, &total);
+            std::cout << "CUDA Memory Free: " << free / (1024 * 1024) << " out of " << total / (1024 * 1024) << std::endl;
+
+            // serialize buffers
+            std::cout << "SERIALIZE!!!" << std::endl;
+            void * old_dev_ptr = ggml_backend_buffer_serialize(buf);
+
+            // print free device memory again
+            ggml_backend_cuda_get_device_memory(0, &free, &total);
+            std::cout << "CUDA Memory Free: " << free / (1024 * 1024) << " out of " << total / (1024 * 1024) << std::endl;
+
+            // deserialize buffers
+            std::cout << "DESERIALIZE!!!" << std::endl;
+            void * dev_ptr = ggml_backend_buffer_deserialize(buf);
+
+            // re-base tensor pointers
+            for (struct ggml_tensor * cur = ggml_get_first_tensor(cu_ctx); cur != NULL; cur = ggml_get_next_tensor(cu_ctx, cur)) {
+                const long offset = (char *) cur->data - (char *) old_dev_ptr;
+                cur->data = dev_ptr + offset;
+            }
+
+            // print free device memory again
+            ggml_backend_cuda_get_device_memory(0, &free, &total);
+            std::cout << "CUDA Memory Free: " << free / (1024 * 1024) << " out of " << total / (1024 * 1024) << std::endl;       
+        }
+    }
+
+    ////
+    // END CAUTION
+    ////
+
     return true;
 }
 

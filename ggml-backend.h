@@ -45,6 +45,8 @@ extern "C" {
     GGML_API           void                       ggml_backend_buffer_set_usage     (ggml_backend_buffer_t buffer, enum ggml_backend_buffer_usage usage);
     GGML_API           ggml_backend_buffer_type_t ggml_backend_buffer_get_type      (ggml_backend_buffer_t buffer);
     GGML_API           void                       ggml_backend_buffer_reset         (ggml_backend_buffer_t buffer);
+    GGML_API           void *                     ggml_backend_buffer_serialize     (ggml_backend_buffer_t buffer);
+    GGML_API           void *                     ggml_backend_buffer_deserialize   (ggml_backend_buffer_t buffer);
 
     //
     // Backend

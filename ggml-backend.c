@@ -156,6 +156,16 @@ bool ggml_backend_buffer_copy_tensor(const struct ggml_tensor * src, struct ggml
     return false;
 }
 
+void * ggml_backend_buffer_serialize(ggml_backend_buffer_t buffer)
+{
+    return buffer->iface.serialize(buffer);
+}
+
+void * ggml_backend_buffer_deserialize(ggml_backend_buffer_t buffer)
+{
+    return buffer->iface.deserialize(buffer);
+}
+
 // backend
 
 ggml_guid_t ggml_backend_guid(ggml_backend_t backend) {
@@ -601,6 +611,8 @@ static struct ggml_backend_buffer_i cpu_backend_buffer_i = {
     /* .cpy_tensor      = */ ggml_backend_cpu_buffer_cpy_tensor,
     /* .clear           = */ ggml_backend_cpu_buffer_clear,
     /* .reset           = */ NULL,
+    /* .serialize       = */ NULL,
+    /* .deserialize     = */ NULL
 };
 
 // for buffers from ptr, free is not called
@@ -614,6 +626,8 @@ static struct ggml_backend_buffer_i cpu_backend_buffer_i_from_ptr = {
     /* .cpy_tensor      = */ ggml_backend_cpu_buffer_cpy_tensor,
     /* .clear           = */ ggml_backend_cpu_buffer_clear,
     /* .reset           = */ NULL,
+    /* .serialize       = */ NULL,
+    /* .deserialize     = */ NULL
 };
 
 GGML_CALL static const char * ggml_backend_cpu_buffer_type_get_name(ggml_backend_buffer_type_t buft) {
@@ -962,6 +976,8 @@ static struct ggml_backend_buffer_i ggml_backend_multi_buffer_context_interface(
         /* .cpy_tensor      = */ NULL,
         /* .clear           = */ ggml_backend_multi_buffer_clear,
         /* .reset           = */ NULL,
+        /* .serialize       = */ NULL,
+        /* .deserialize     = */ NULL
     };
 
     return multi_backend_buffer_i;

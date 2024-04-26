@@ -45,6 +45,8 @@ extern "C" {
         bool         (*GGML_CALL cpy_tensor) (ggml_backend_buffer_t buffer, const struct ggml_tensor * src, struct ggml_tensor * dst); // dst is in the buffer, src may be in any buffer
         void         (*GGML_CALL clear)      (ggml_backend_buffer_t buffer, uint8_t value);
         void         (*GGML_CALL reset)      (ggml_backend_buffer_t buffer); // reset any internal state due to tensor initialization, such as tensor extras
+        void *       (*GGML_CALL serialize)  (ggml_backend_buffer_t buffer); // serialize device memory content to host memory
+        void *       (*GGML_CALL deserialize)(ggml_backend_buffer_t buffer); // restore device memory from host memory
     };
 
     struct ggml_backend_buffer {
