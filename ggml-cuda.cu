@@ -548,9 +548,6 @@ GGML_CALL static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffe
 
     size = std::max(size, (size_t)1); // cudaMalloc returns null for size 0
 
-    std::cout << "In ggml_backend_cuda_buffer_type_alloc_buffer..." << std::endl;
-    std::cout << "cudaMalloc " << (size / (1024 * 1024)) << std::endl;
-
     void * dev_ptr;
     cudaError_t err = cudaMalloc(&dev_ptr, size);
     if (err != cudaSuccess) {
