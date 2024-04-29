@@ -360,6 +360,8 @@ struct ggml_gallocr {
     struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers]
     int n_buffers;
 
+    void ** swap_pointers; //[n_buffers]
+
     struct ggml_hash_set hash_set;
     struct hash_node * hash_values; // [hash_set.size]
 
@@ -382,6 +384,9 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
 
     galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
     GGML_ASSERT(galloc->buf_tallocs != NULL);
+
+    galloc->swap_pointers = calloc(n_bufs, sizeof(void *));
+    GGML_ASSERT(galloc->swap_pointers != NULL);
 
     for (int i = 0; i < n_bufs; i++) {
         galloc->bufts[i] = bufts[i];
@@ -417,6 +422,7 @@ void ggml_gallocr_free(ggml_gallocr_t galloc) {
     free(galloc->bufts);
     free(galloc->buffers);
     free(galloc->buf_tallocs);
+    free(galloc->swap_pointers);
     free(galloc->node_allocs);
     free(galloc->leaf_allocs);
     free(galloc);
@@ -872,6 +878,28 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
         return 0;
     }
     return ggml_backend_buffer_get_size(galloc->buffers[buffer_id]);
+}
+
+void * ggml_backend_gallocr_swap_out(ggml_gallocr_t galloc)
+{
+    for(int bix = 0; bix < galloc->n_buffers; ++bix)
+    {
+        if(ggml_backend_buffer_is_host(galloc->buffers[bix]))
+            continue;
+
+        galloc->swap_pointers[bix] = ggml_backend_buffer_serialize(galloc->buffers[bix]);
+    }
+}
+
+void * ggml_backend_gallocr_swap_in(ggml_gallocr_t galloc)
+{
+    for(int bix = 0; bix < galloc->n_buffers; ++bix)
+    {
+        if(ggml_backend_buffer_is_host(galloc->buffers[bix]))
+            continue;
+
+        ggml_backend_buffer_deserialize(galloc->buffers[bix]);
+    }
 }
 
 // utils

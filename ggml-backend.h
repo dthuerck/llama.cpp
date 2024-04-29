@@ -205,6 +205,10 @@ extern "C" {
     // Set a callback to be called for each resulting node during graph compute
     GGML_API void                 ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backend_sched_eval_callback callback, void * user_data);
 
+    // swap device part of the sched's buffers in and out of the device
+    GGML_API void                 ggml_backend_sched_swap_out(ggml_backend_sched_t sched);
+    GGML_API void                 ggml_backend_sched_swap_in(ggml_backend_sched_t sched);
+
     //
     // Utils
     //

@@ -1763,6 +1763,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
     for (int b = 0; b < n_backends; b++) {
         sched->backends[b] = backends[b];
         sched->bufts[b] = bufts ? bufts[b] : ggml_backend_get_default_buffer_type(backends[b]);
+        printf("SET BUFT[%d]\n", b);
         GGML_ASSERT(ggml_backend_buft_supports_backend(sched->bufts[b], backends[b]));
         if (sched->n_copies > 1) {
             for (int c = 0; c < sched->n_copies; c++) {
@@ -1868,6 +1869,14 @@ void ggml_backend_sched_synchronize(ggml_backend_sched_t sched) {
 void ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backend_sched_eval_callback callback, void * user_data) {
     sched->callback_eval = callback;
     sched->callback_eval_user_data = user_data;
+}
+
+void ggml_backend_sched_swap_out(ggml_backend_sched_t sched) {
+    ggml_backend_gallocr_swap_out(sched->galloc);
+}
+
+void ggml_backend_sched_swap_in(ggml_backend_sched_t sched) {
+    ggml_backend_gallocr_swap_in(sched->galloc);
 }
 
 int ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched) {

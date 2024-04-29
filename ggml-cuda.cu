@@ -382,19 +382,27 @@ struct ggml_backend_cuda_buffer_context {
         ggml_cuda_set_device(device);
         if(dev_ptr != nullptr)
             CUDA_CHECK(cudaFree(dev_ptr));
+        if(host_ptr != nullptr)
+            free(host_ptr);
     }
 
     // store device data in host buffer and free device-side memory
     void * serialize() {
+        ggml_cuda_set_device(device);
+
         host_ptr = malloc(dev_size);
         CUDA_CHECK(cudaMemcpy(host_ptr, dev_ptr, dev_size, cudaMemcpyDeviceToHost));
 
         void * old_dev_ptr = dev_ptr;
         CUDA_CHECK(cudaFree(dev_ptr));
+        dev_ptr = nullptr;
+
         return old_dev_ptr;
     }
 
     void * deserialize(void * new_dev_ptr) {
+        ggml_cuda_set_device(device);
+
         dev_ptr = new_dev_ptr;
         CUDA_CHECK(cudaMemcpy(dev_ptr, host_ptr, dev_size, cudaMemcpyHostToDevice));
 

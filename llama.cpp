@@ -2060,6 +2060,8 @@ struct llama_kv_cache {
     std::vector<struct ggml_context *> ctxs;
     std::vector<ggml_backend_buffer_t> bufs;
 
+    std::vector<void *> swap_pointers;
+
     size_t total_size() const {
         size_t size = 0;
         for (ggml_backend_buffer_t buf : bufs) {
@@ -2281,6 +2283,7 @@ struct llama_context {
 
     // host buffer for the model output (logits and embeddings)
     ggml_backend_buffer_t buf_output = nullptr;
+    std::vector<void *> output_swap_pointers;
 
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     size_t  logits_size = 0; // capacity (of floats) for logits
@@ -15250,12 +15253,15 @@ void llama_free_model(struct llama_model * model) {
     delete model;
 }
 
-void llama_model_backend_swap_out(struct llama_model * model)
+void llama_backend_swap_out(
+    struct llama_context * context,
+    struct llama_model * model)
 {
+    // model weights
     assert(model->ctxs.size() == model->bufs.size());
 
     model->swap_pointers.clear();
-    model->swap_pointers.reserve(model->ctxs.size());
+    model->swap_pointers.resize(model->ctxs.size());
 
     for(int buf_ix = 0; buf_ix < model->bufs.size(); ++buf_ix)
     {
@@ -15267,10 +15273,34 @@ void llama_model_backend_swap_out(struct llama_model * model)
 
         model->swap_pointers[buf_ix] = ggml_backend_buffer_serialize(buf);
     }
+
+    // KV cache
+    llama_kv_cache * cache = &context->kv_self;
+    assert(cache->ctxs.size() == cache->bufs.size());
+
+    cache->swap_pointers.clear();
+    cache->swap_pointers.resize(cache->ctxs.size());
+
+    for(int buf_ix = 0; buf_ix < cache->bufs.size(); ++buf_ix)
+    {
+        ggml_backend_buffer_t buf = cache->bufs[buf_ix];
+
+        // only need to download device-side buffers
+        if(ggml_backend_buffer_is_host(buf))
+            continue;
+
+        cache->swap_pointers[buf_ix] = ggml_backend_buffer_serialize(buf);
+    }
+
+    // compute buffers
+    ggml_backend_sched_swap_out(context->sched);
 }
 
-void llama_model_backend_swap_in(struct llama_model * model)
+void llama_backend_swap_in(
+    struct llama_context * context,
+    struct llama_model * model)
 {
+    // model weights
     assert(model->ctxs.size() == model->bufs.size());
 
     for(int buf_ix = 0; buf_ix < model->bufs.size(); ++buf_ix)
@@ -15291,6 +15321,36 @@ void llama_model_backend_swap_in(struct llama_model * model)
             cur->data = (void *) ((char *) new_backend_ptr + offset);
         }
     }
+
+    // KV cache
+    llama_kv_cache * cache = &context->kv_self;
+    assert(cache->ctxs.size() == cache->bufs.size());
+
+    for(int buf_ix = 0; buf_ix < cache->bufs.size(); ++buf_ix)
+    {
+        ggml_backend_buffer_t buf = cache->bufs[buf_ix];
+        ggml_context * ctx = cache->ctxs[buf_ix];
+        void * swap_ptr = cache->swap_pointers[buf_ix];
+
+        // only need to download device-side buffers
+        if(ggml_backend_buffer_is_host(buf))
+            continue;
+
+        void * new_backend_ptr = ggml_backend_buffer_deserialize(buf);
+
+        // re-base tensors to new backend pointer
+        for (struct ggml_tensor * cur : cache->k_l) {
+            const long offset = (char *) cur->data - (char *) swap_ptr;
+            cur->data = (void *) ((char *) new_backend_ptr + offset);
+        }
+        for (struct ggml_tensor * cur : cache->v_l) {
+            const long offset = (char *) cur->data - (char *) swap_ptr;
+            cur->data = (void *) ((char *) new_backend_ptr + offset);
+        }
+    }
+
+    // compute buffers
+    ggml_backend_sched_swap_in(context->sched);
 }
 
 struct llama_context * llama_new_context_with_model(
