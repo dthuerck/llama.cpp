@@ -26,6 +26,7 @@
 .clang-tidy
 .vs/
 .vscode/
+venv/
 .idea/
 
 ggml-metal-embed.metal
