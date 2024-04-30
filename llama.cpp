@@ -2283,7 +2283,7 @@ struct llama_context {
 
     // host buffer for the model output (logits and embeddings)
     ggml_backend_buffer_t buf_output = nullptr;
-    std::vector<void *> output_swap_pointers;
+    void * output_swap_pointer;
 
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     size_t  logits_size = 0; // capacity (of floats) for logits
@@ -15294,6 +15294,13 @@ void llama_backend_swap_out(
 
     // compute buffers
     ggml_backend_sched_swap_out(context->sched);
+
+    // output buffers
+    if(!ggml_backend_buffer_is_host(context->buf_output))
+    {
+        context->output_swap_pointer = ggml_backend_buffer_serialize(
+            context->buf_output);
+    }
 }
 
 void llama_backend_swap_in(
@@ -15351,6 +15358,11 @@ void llama_backend_swap_in(
 
     // compute buffers
     ggml_backend_sched_swap_in(context->sched);
+
+    if(!ggml_backend_buffer_is_host(context->buf_output))
+    {
+        ggml_backend_buffer_deserialize(context->buf_output);
+    }
 }
 
 struct llama_context * llama_new_context_with_model(

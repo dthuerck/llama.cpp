@@ -1763,7 +1763,6 @@ ggml_backend_sched_t ggml_backend_sched_new(
     for (int b = 0; b < n_backends; b++) {
         sched->backends[b] = backends[b];
         sched->bufts[b] = bufts ? bufts[b] : ggml_backend_get_default_buffer_type(backends[b]);
-        printf("SET BUFT[%d]\n", b);
         GGML_ASSERT(ggml_backend_buft_supports_backend(sched->bufts[b], backends[b]));
         if (sched->n_copies > 1) {
             for (int c = 0; c < sched->n_copies; c++) {
